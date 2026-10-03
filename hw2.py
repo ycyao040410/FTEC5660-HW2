@@ -68,13 +68,6 @@ async def load_mcp_tools() -> list[Any]:
     return await client.get_tools()
 
 
-
-
-
-
-
-
-
 import asyncio
 import json
 import re
@@ -170,13 +163,11 @@ def _identity(cv, profile):
 
 def _issues(cv, profile):
     issues = []
-
     for field in ("name", "city"):
         if cv[field] and _norm(cv[field]) != _norm(profile[field]):
             issues.append(
                 f"{field}: CV={cv[field]}, profile={profile[field]}"
             )
-
     for job in cv["jobs"]:
         matches = [
             p for p in profile["experience"]
@@ -186,13 +177,11 @@ def _issues(cv, profile):
         if not matches:
             issues.append(f"Employer not supported: {job['company']}")
             continue
-
         failures = []
         for p in matches:
             bad = []
             role, level = _role(job["title"])
             actual_role, title_level = _role(p["title"])
-
             if role != actual_role or (
                 level and level != (title_level or p["seniority"])
             ):
@@ -200,12 +189,10 @@ def _issues(cv, profile):
                     f"title: {job['title']} vs "
                     f"{p['title']} ({p['seniority']})"
                 )
-
             if job["start_year"] != p["start_year"]:
                 bad.append(
                     f"start year: {job['start_year']} vs {p['start_year']}"
                 )
-
             if job["end_year"] is None:
                 if p["end_year"] is not None or not p["is_current"]:
                     bad.append("CV claims a current job")
@@ -213,15 +200,12 @@ def _issues(cv, profile):
                 bad.append(
                     f"end year: {job['end_year']} vs {p['end_year']}"
                 )
-
             failures.append(bad)
-
         if all(failures):
             issues.extend(
                 f"{job['company']}: {x}"
                 for x in min(failures, key=len)
             )
-
     for edu in cv["education"]:
         matches = [
             p for p in profile["education"]
@@ -231,7 +215,6 @@ def _issues(cv, profile):
         if not matches:
             issues.append(f"School not supported: {edu['school']}")
             continue
-
         failures = []
         for p in matches:
             bad = []
@@ -242,7 +225,6 @@ def _issues(cv, profile):
                     _canon(edu[field], kind) != _canon(p[field], kind)
                 ):
                     bad.append(f"{field}: {edu[field]} vs {p[field]}")
-
             if (
                 edu["graduation_year"] is not None
                 and edu["graduation_year"] != p["end_year"]
@@ -253,13 +235,11 @@ def _issues(cv, profile):
                 )
 
             failures.append(bad)
-
         if all(failures):
             issues.extend(
                 f"{edu['school']}: {x}"
                 for x in min(failures, key=len)
             )
-
     skills = {
         _canon(s["name"], "skill") for s in profile["skills"]
     }
@@ -268,7 +248,6 @@ def _issues(cv, profile):
         for s in cv["skills"]
         if _canon(s, "skill") not in skills
     )
-
     return issues
 
 
@@ -280,7 +259,6 @@ def build_agent(tools):
         max_retries=1,
         extra_body={"thinking": {"type": "disabled"}},
     )
-
     prompt = ChatPromptTemplate.from_messages([
         ("system", """
 Extract CV claims into JSON. Do not judge truth or plausibility.
@@ -296,7 +274,6 @@ jobs: list of company, title, start_year (integer),
 education: list of school, degree, field,
            graduation_year (integer or null);
 skills: list of strings from the skills section only.
-
 Extract every job, education and listed skill without adding or dropping any.
 Preserve Senior/Junior in job titles. Never infer seniority from job duties.
 Present/current means end_year=null.
@@ -308,7 +285,6 @@ Output JSON only.
 """),
         ("human", "CV data:\n{text}"),
     ])
-
     return {
         "extract": prompt | llm | JsonOutputParser(),
         "tools": {t.name: t for t in tools},
@@ -318,11 +294,9 @@ Output JSON only.
 
 async def score_cvs(agent, cvs):
     limit = asyncio.Semaphore(3)
-
     async def call(name, args):
         async with agent["tool_limit"]:
             content = await agent["tools"][name].ainvoke(args)
-
         if isinstance(content, list):
             blocks = [
                 json.loads(b["text"])
@@ -337,7 +311,6 @@ async def score_cvs(agent, cvs):
                 json.loads(content)
                 if isinstance(content, str) else content
             )
-
         if isinstance(data, dict) and "error" in data:
             raise ValueError(data["error"])
 
@@ -345,21 +318,17 @@ async def score_cvs(agent, cvs):
             data.get("result", data)
             if isinstance(data, dict) else data
         )
-
     async def verify(name, text):
         cv = await agent["extract"].ainvoke({"text": text})
 
         if not cv.get("name") or not cv.get("city"):
             raise ValueError("Name or current city was not extracted")
-
         for key in ("jobs", "education", "skills"):
             if not isinstance(cv.get(key), list):
                 raise ValueError(f"Invalid extracted {key}")
-
         anchors = len(cv["jobs"]) + len(cv["education"])
         if not anchors:
             raise ValueError("Insufficient identity anchors")
-
         profiles = {}
         queries = [
             (cv["name"], cv["city"], cv.get("industry")),
@@ -371,7 +340,6 @@ async def score_cvs(agent, cvs):
             queries.append(
                 (cv["skills"][0], cv["city"], cv.get("industry"))
             )
-
         best = None
         for q, city, industry in dict.fromkeys(queries):
             people = await call("search_linkedin_people", {
@@ -380,7 +348,6 @@ async def score_cvs(agent, cvs):
                 "industry": industry,
                 "limit": 20,
             })
-
             for person in people:
                 if person["id"] not in profiles:
                     profile = await call(
@@ -388,13 +355,11 @@ async def score_cvs(agent, cvs):
                         {"person_id": person["id"]},
                     )
                     profiles[person["id"]] = profile
-
             ranked = sorted(
                 profiles.values(),
                 key=lambda p: _identity(cv, p)[0],
                 reverse=True,
             )
-
             if ranked:
                 best = ranked[0]
                 _, hits = _identity(cv, best)
@@ -405,14 +370,12 @@ async def score_cvs(agent, cvs):
                 )
                 if unique and hits >= max(1, anchors - 1):
                     break
-
         if (
             best is None
             or _identity(cv, best)[1] < max(1, anchors - 1)
         ):
             print(f"{name}: identity uncertain")
             return 0.5
-
         ranked = sorted(
             profiles.values(),
             key=lambda p: _identity(cv, p)[0],
@@ -425,14 +388,12 @@ async def score_cvs(agent, cvs):
         ):
             print(f"{name}: tied identity candidates")
             return 0.5
-
         reasons = _issues(cv, best)
         print(
             f"{name}: profile_id={best['id']}; "
             + ("; ".join(reasons) or "all claims match")
         )
         return 0.1 if reasons else 0.9
-
     async def one(name, text):
         async with limit:
             async def retry():
@@ -445,7 +406,6 @@ async def score_cvs(agent, cvs):
                             f"{type(exc).__name__}: {exc}"
                         )
                 return 0.5
-
             try:
                 score = await asyncio.wait_for(
                     retry(), timeout=180
@@ -456,20 +416,10 @@ async def score_cvs(agent, cvs):
                     f"({type(exc).__name__})"
                 )
                 score = 0.5
-
             return name, score
-
     return dict(await asyncio.gather(
         *(one(name, text) for name, text in cvs.items())
     ))
-
-
-
-
-
-
-
-
 
 
 # Everything below is provided runner/scoring code. No edits are needed.
