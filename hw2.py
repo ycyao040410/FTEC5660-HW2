@@ -99,12 +99,21 @@ def _canon(value, kind=""):
         ],
         "school": [
             ("hku", "theuniversityofhongkong", "universityofhongkong"),
-            ("hkust", "hongkonguniversityofscienceandtechnology",
-             "thehongkonguniversityofscienceandtechnology"),
-            ("cuhk", "chineseuniversityofhongkong",
-             "thechineseuniversityofhongkong"),
-            ("polyu", "hongkongpolytechnicuniversity",
-             "thehongkongpolytechnicuniversity"),
+            (
+                "hkust",
+                "hongkonguniversityofscienceandtechnology",
+                "thehongkonguniversityofscienceandtechnology",
+            ),
+            (
+                "cuhk",
+                "chineseuniversityofhongkong",
+                "thechineseuniversityofhongkong",
+            ),
+            (
+                "polyu",
+                "hongkongpolytechnicuniversity",
+                "thehongkongpolytechnicuniversity",
+            ),
             ("mit", "massachusettsinstituteoftechnology"),
             ("stanford", "stanforduniversity"),
             ("oxford", "universityofoxford", "oxforduniversity"),
@@ -114,7 +123,8 @@ def _canon(value, kind=""):
     if kind == "company":
         k = re.sub(
             r"(?:limited|ltd|incorporated|inc|corporation|corp|llp|plc)$",
-            "", k
+            "",
+            k,
         )
     for group in groups.get(kind, []):
         if k in group:
@@ -131,7 +141,8 @@ def _role(title):
         return _norm(title), None
     level = match[1].lower().rstrip(".")
     return _norm(match[2]), {
-        "sr": "senior", "jr": "junior"
+        "sr": "senior",
+        "jr": "junior",
     }.get(level, level)
 
 
@@ -219,7 +230,8 @@ def _issues(cv, profile):
         for p in matches:
             bad = []
             for field, kind in (
-                ("degree", "degree"), ("field", "skill")
+                ("degree", "degree"),
+                ("field", "skill"),
             ):
                 if edu[field] and (
                     _canon(edu[field], kind) != _canon(p[field], kind)
@@ -294,10 +306,13 @@ Output JSON only.
 
 async def score_cvs(agent, cvs):
     limit = asyncio.Semaphore(3)
+
     async def call(name, args):
         async with agent["tool_limit"]:
             content = await agent["tools"][name].ainvoke(args)
         if isinstance(content, list):
+            if not content and name.startswith("search_"):
+                return []
             blocks = [
                 json.loads(b["text"])
                 for b in content
@@ -318,8 +333,15 @@ async def score_cvs(agent, cvs):
             data.get("result", data)
             if isinstance(data, dict) else data
         )
+
     async def verify(name, text):
         cv = await agent["extract"].ainvoke({"text": text})
+        cv["industry"] = re.sub(
+            r"\s+professional$",
+            "",
+            str(cv.get("industry") or "").strip(),
+            flags=re.I,
+        ) or None
 
         if not cv.get("name") or not cv.get("city"):
             raise ValueError("Name or current city was not extracted")
@@ -394,8 +416,10 @@ async def score_cvs(agent, cvs):
             + ("; ".join(reasons) or "all claims match")
         )
         return 0.1 if reasons else 0.9
+
     async def one(name, text):
         async with limit:
+
             async def retry():
                 for attempt in range(2):
                     try:
@@ -406,6 +430,7 @@ async def score_cvs(agent, cvs):
                             f"{type(exc).__name__}: {exc}"
                         )
                 return 0.5
+
             try:
                 score = await asyncio.wait_for(
                     retry(), timeout=180
@@ -417,6 +442,7 @@ async def score_cvs(agent, cvs):
                 )
                 score = 0.5
             return name, score
+
     return dict(await asyncio.gather(
         *(one(name, text) for name, text in cvs.items())
     ))
